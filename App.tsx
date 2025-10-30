@@ -823,7 +823,7 @@ interface SelectedItemPanelProps {
     colorGradingData: Record<string, ColorGradingData>;
     cameraMovement: Record<string, CameraMovementData>;
     updateVisuals: (id: string, dataType: 'compositions' | 'lightingData' | 'colorGradingData' | 'cameraMovement', data: any) => void;
-    updatePromptFromVisuals: (id: string) => void;
+    updatePromptFromVisuals: (id: string) => Promise<void>;
     aspectRatios: Record<string, string>;
     setAspectRatios: React.Dispatch<React.SetStateAction<Record<string, string>>>;
 }
@@ -836,6 +836,16 @@ const SelectedItemPanel: React.FC<SelectedItemPanelProps> = ({
 }) => {
     const [activeVisualTab, setActiveVisualTab] = useState<'composition' | 'lighting' | 'color' | 'camera'>('composition');
     const [imageView, setImageView] = useState<'photoreal' | 'stylized'>('photoreal');
+    const [isUpdatingPrompt, setIsUpdatingPrompt] = useState(false);
+
+    const handleUpdatePromptFromVisuals = async () => {
+        setIsUpdatingPrompt(true);
+        try {
+            await updatePromptFromVisuals(item.id);
+        } finally {
+            setIsUpdatingPrompt(false);
+        }
+    };
 
     if (item.type !== 'shot') {
         return (
@@ -939,7 +949,14 @@ const SelectedItemPanel: React.FC<SelectedItemPanelProps> = ({
             <div>
                  <div className="flex items-center justify-between mb-2">
                     <h3 className="text-lg font-semibold text-amber-400">Visual Architecture</h3>
-                    <button onClick={() => updatePromptFromVisuals(item.id)} className="px-3 py-1 text-sm rounded bg-amber-500/20 text-amber-400 hover:bg-amber-500/30">Update Prompt from Visuals</button>
+                    <button 
+                        onClick={handleUpdatePromptFromVisuals} 
+                        disabled={isUpdatingPrompt}
+                        className="px-3 py-1 text-sm rounded bg-amber-500/20 text-amber-400 hover:bg-amber-500/30 disabled:opacity-60 flex items-center space-x-2"
+                    >
+                        {isUpdatingPrompt && <div className="w-4 h-4 animate-spin rounded-full border-2 border-amber-300 border-t-amber-500" />}
+                        <span>{isUpdatingPrompt ? 'Updating...' : 'Update Prompt from Visuals'}</span>
+                    </button>
                  </div>
                  <div className="flex items-center space-x-2 mb-2 border-b border-gray-800">
                     {(['composition', 'lighting', 'color', 'camera'] as const).map(tab => (
@@ -1222,7 +1239,7 @@ const VisualSequenceEditor: React.FC<VisualSequenceEditorProps> = (props) => {
                                 colorGradingData={colorGradingData}
                                 cameraMovement={cameraMovement}
                                 updateVisuals={updateVisuals}
-                                updatePromptFromVisuals={updatePromptFromVisuals}
+                                updatePromptFromVisuals={props.updatePromptFromVisuals as (id: string) => Promise<void>}
                                 aspectRatios={aspectRatios}
                                 setAspectRatios={setAspectRatios}
                            />

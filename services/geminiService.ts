@@ -215,11 +215,24 @@ export const generateStoryboard = async (script: string): Promise<StoryboardShot
                 thinkingConfig: { thinkingBudget: 32768 },
             },
         });
-        const jsonString = response.text.trim();
+        
+        let jsonString = response.text.trim();
+        // The API can sometimes wrap the JSON in markdown or other text. This extracts the core JSON array.
+        const jsonMatch = jsonString.match(/```json\s*([\s\S]*?)\s*```/);
+        if (jsonMatch && jsonMatch[1]) {
+            jsonString = jsonMatch[1];
+        } else {
+            const startIndex = jsonString.indexOf('[');
+            const endIndex = jsonString.lastIndexOf(']');
+            if (startIndex !== -1 && endIndex !== -1) {
+                jsonString = jsonString.substring(startIndex, endIndex + 1);
+            }
+        }
+
         return JSON.parse(jsonString);
     } catch (error) {
         console.error("Gemini API Error - Storyboard generation failed:", error);
-        throw new Error("Failed to generate storyboard.");
+        throw new Error("Failed to generate or parse storyboard JSON from API response.");
     }
 };
 
@@ -359,12 +372,16 @@ export const generateSmartVisualDescription = async (visuals: {
     camera: CameraMovementData,
 }): Promise<string> => {
     try {
+        const compositionDetails = visuals.composition.characters.length > 0
+            ? `Characters are positioned as follows: ${visuals.composition.characters.map(c => `${c.name} at coordinates (X: ${Math.round(c.x)}, Y: ${Math.round(c.y)})`).join(', ')}.`
+            : "There are no characters in the frame.";
+
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash',
             contents: `You are a master cinematographer. Based on the following structured visual data, write a single, evocative, cinematic paragraph describing the scene. Focus on composition, character placement, lighting mood, color theory, and camera work. Do not list the data; interpret it into a holistic description.
 
             DATA:
-            - Composition: ${visuals.composition.characters.length} characters. Main subject is at (${Math.round(visuals.composition.characters[0]?.x)}, ${Math.round(visuals.composition.characters[0]?.y)}). Camera is at ${visuals.composition.cameraHeight} with a ${visuals.composition.cameraAngle} angle.
+            - Composition: ${compositionDetails} The camera is at ${visuals.composition.cameraHeight} with a ${visuals.composition.cameraAngle} angle.
             - Lighting: The mood is ${visuals.lighting.mood}. Key light is at ${visuals.lighting.keyLightIntensity}% intensity with a color of ${visuals.lighting.keyLightColor}. The scene has a color temperature of ${visuals.lighting.colorTemperature}K.
             - Color: The grade is named "${visuals.color.colorGrade}" with a ${visuals.color.colorHarmony} harmony. Saturation is at ${visuals.color.saturation} and contrast is ${visuals.color.contrast}.
             - Camera Movement: The camera performs a ${visuals.camera.movementType} over ${visuals.camera.duration} seconds with ${visuals.camera.easing} easing, moving from (${visuals.camera.startPos.x}, ${visuals.camera.startPos.y}) to (${visuals.camera.endPos.x}, ${visuals.camera.endPos.y}). The focal length is ${visuals.camera.focalLength}mm.`,
