@@ -663,18 +663,11 @@ const StoryboardPage: React.FC<{
         if (storyboard.length === 0 || isConverting) return;
         setIsConverting(true);
     
-        const items: ShotItem[] = [];
-        const newCompositions: Record<string, CompositionData> = {};
-        const newLighting: Record<string, LightingData> = {};
-        const newColor: Record<string, ColorGradingData> = {};
-        const newCamera: Record<string, CameraMovementData> = {};
-    
-        for (const [index, shot] of storyboard.entries()) {
+        // Create item stubs first to get stable IDs.
+        const items: ShotItem[] = storyboard.map((shot, index) => {
             const prompt = `Cinematic shot ${index + 1}: ${shot.shotDetails.shotType}. Scene: ${shot.screenplayLine}. Description: ${shot.shotDetails.description}. Camera Angle: ${shot.shotDetails.cameraAngle}. Camera Movement: ${shot.shotDetails.cameraMovement}. Lighting: ${shot.shotDetails.lightingMood}.`;
-            const newItemId = crypto.randomUUID();
-            
-            items.push({
-                id: newItemId,
+            return {
+                id: crypto.randomUUID(),
                 type: 'shot',
                 data: {
                     shotNumber: index + 1,
@@ -683,14 +676,26 @@ const StoryboardPage: React.FC<{
                     description: shot.screenplayLine,
                     role: shot.shotDetails.shotType,
                 }
-            });
-            
-            const visuals = await initializeVisualsFromStoryboardShot(shot);
-            newCompositions[newItemId] = visuals.composition;
-            newLighting[newItemId] = visuals.lighting;
-            newColor[newItemId] = visuals.color;
-            newCamera[newItemId] = visuals.camera;
-        }
+            };
+        });
+    
+        // Fire all visual generation requests in parallel for performance.
+        const visualPromises = storyboard.map(shot => initializeVisualsFromStoryboardShot(shot));
+        const allVisuals = await Promise.all(visualPromises);
+    
+        const newCompositions: Record<string, CompositionData> = {};
+        const newLighting: Record<string, LightingData> = {};
+        const newColor: Record<string, ColorGradingData> = {};
+        const newCamera: Record<string, CameraMovementData> = {};
+    
+        // Map the resolved visual data to the corresponding item IDs.
+        items.forEach((item, index) => {
+            const visuals = allVisuals[index];
+            newCompositions[item.id] = visuals.composition;
+            newLighting[item.id] = visuals.lighting;
+            newColor[item.id] = visuals.color;
+            newCamera[item.id] = visuals.camera;
+        });
     
         setCompositions(prev => ({ ...prev, ...newCompositions }));
         setLightingData(prev => ({ ...prev, ...newLighting }));
