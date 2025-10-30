@@ -217,19 +217,44 @@ export const generateStoryboard = async (script: string): Promise<StoryboardShot
         });
         
         let jsonString = response.text.trim();
-        // The API can sometimes wrap the JSON in markdown or other text. This extracts the core JSON array.
+
+        // The API can sometimes wrap the JSON in markdown or other text. This robustly extracts the core JSON object or array.
         const jsonMatch = jsonString.match(/```json\s*([\s\S]*?)\s*```/);
         if (jsonMatch && jsonMatch[1]) {
             jsonString = jsonMatch[1];
         } else {
-            const startIndex = jsonString.indexOf('[');
-            const endIndex = jsonString.lastIndexOf(']');
-            if (startIndex !== -1 && endIndex !== -1) {
-                jsonString = jsonString.substring(startIndex, endIndex + 1);
+            const firstBracket = jsonString.indexOf('[');
+            const firstBrace = jsonString.indexOf('{');
+            let start = -1;
+            if (firstBracket === -1) {
+                start = firstBrace;
+            } else if (firstBrace === -1) {
+                start = firstBracket;
+            } else {
+                start = Math.min(firstBracket, firstBrace);
+            }
+
+            if (start !== -1) {
+                const lastBracket = jsonString.lastIndexOf(']');
+                const lastBrace = jsonString.lastIndexOf('}');
+                const end = Math.max(lastBracket, lastBrace);
+                if (end > start) {
+                    jsonString = jsonString.substring(start, end + 1);
+                }
             }
         }
+        
+        const parsedData = JSON.parse(jsonString);
 
-        return JSON.parse(jsonString);
+        // Ensure the output is always an array, as the model sometimes returns a single object for a single shot.
+        if (Array.isArray(parsedData)) {
+            return parsedData;
+        } else if (typeof parsedData === 'object' && parsedData !== null) {
+            return [parsedData];
+        }
+
+        throw new Error("Failed to parse storyboard: result was not an array or object.");
+
     } catch (error) {
         console.error("Gemini API Error - Storyboard generation failed:", error);
         throw new Error("Failed to generate or parse storyboard JSON from API response.");
