@@ -1,9 +1,20 @@
 
+
 import { GoogleGenAI, Modality, Type } from "@google/genai";
-import { ExtractedKnowledge, StoryboardShot, SequenceStyle, CompositionData, LightingData, ColorGradingData, CameraMovementData } from "../types";
+import { ExtractedKnowledge, StoryboardShot, SequenceStyle, CompositionData, LightingData, ColorGradingData, CameraMovementData, CompositionCharacter } from "../types";
 
 // The GoogleGenAI instance is initialized with the API key from environment variables as per guidelines.
 const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+
+function clone<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value));
+}
+
+const defaultComposition: CompositionData = { characters: [{ id: 'char-1', name: 'Subject A', x: 400, y: 225 }], cameraAngle: 'true-eye, honest', cameraHeight: 'eye-level witness' };
+const defaultLighting: LightingData = { keyLightIntensity: 80, keyLightColor: '#FFD8A8', fillLightIntensity: 40, fillLightColor: '#89CFF0', backLightIntensity: 60, backLightColor: '#FACC15', ambientIntensity: 20, colorTemperature: 4500, mood: 'chiaroscuro confession' };
+const defaultColorGrading: ColorGradingData = { colorGrade: 'Dreamer Grade', saturation: 10, contrast: 5, highlights: 5, shadows: -5, colorPalette: ['#0F172A', '#1E293B', '#475569', '#F97316', '#FBBF24', '#FDE68A', '#38BDF8', '#A855F7'], colorHarmony: 'complementary pulse' };
+const defaultCameraMovement: CameraMovementData = { movementType: 'static contemplation', startPos: { x: 100, y: 300 }, endPos: { x: 700, y: 150 }, duration: 5, easing: 'ease-in-out', focalLength: 35 };
+
 
 export const extractKnowledge = async (content: string): Promise<ExtractedKnowledge | null> => {
   try {
@@ -362,5 +373,101 @@ export const generateSmartVisualDescription = async (visuals: {
     } catch (error) {
         console.error("Gemini API Error - Smart visual description failed:", error);
         return "A visually compelling scene with detailed cinematography.";
+    }
+};
+
+export const initializeVisualsFromStoryboardShot = async (shot: StoryboardShot): Promise<{
+    composition: CompositionData,
+    lighting: LightingData,
+    color: ColorGradingData,
+    camera: CameraMovementData,
+}> => {
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-flash',
+            contents: `You are a cinematic pre-visualization expert. Based on the following storyboard shot description, generate a complete set of initial visual parameters. Provide reasonable, professional starting points for a visual editor.
+
+            SHOT DETAILS:
+            - Shot Type: ${shot.shotDetails.shotType}
+            - Camera Angle: ${shot.shotDetails.cameraAngle}
+            - Description: ${shot.shotDetails.description}
+            - Lighting Mood: ${shot.shotDetails.lightingMood}
+            - Camera Movement: ${shot.shotDetails.cameraMovement}
+
+            Return a JSON object with the exact structure specified below. Do not include any other text or markdown formatting. The output must be a single, valid JSON object.
+            `,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        composition: {
+                            type: Type.OBJECT,
+                            properties: {
+                                characters: { type: Type.ARRAY, items: { type: Type.OBJECT, properties: { id: { type: Type.STRING }, name: { type: Type.STRING }, x: { type: Type.NUMBER }, y: { type: Type.NUMBER } } }, description: "One or two default characters placed according to the description." },
+                                cameraAngle: { type: Type.STRING, description: "One of the following: 'true-eye, honest', 'steep reverence', 'whispered low', 'Dutch slip'. Choose the most fitting." },
+                                cameraHeight: { type: Type.STRING, description: "One of the following: 'ground-level soul gaze', 'eye-level witness', 'elevated guardian', 'angelic drift'. Choose the most fitting." },
+                            },
+                        },
+                        lighting: {
+                            type: Type.OBJECT,
+                            properties: {
+                                keyLightIntensity: { type: Type.NUMBER, description: "Value from 0-100." },
+                                keyLightColor: { type: Type.STRING, description: "Hex color code." },
+                                fillLightIntensity: { type: Type.NUMBER, description: "Value from 0-100." },
+                                fillLightColor: { type: Type.STRING, description: "Hex color code." },
+                                backLightIntensity: { type: Type.NUMBER, description: "Value from 0-100." },
+                                backLightColor: { type: Type.STRING, description: "Hex color code." },
+                                ambientIntensity: { type: Type.NUMBER, description: "Value from 0-100." },
+                                colorTemperature: { type: Type.NUMBER, description: "Value from 2000-8000." },
+                                mood: { type: Type.STRING, description: "The provided lighting mood string." },
+                            },
+                        },
+                        color: {
+                            type: Type.OBJECT,
+                            properties: {
+                                colorGrade: { type: Type.STRING, description: "A creative name for the color grade." },
+                                saturation: { type: Type.NUMBER, description: "Value from -50 to 50." },
+                                contrast: { type: Type.NUMBER, description: "Value from -50 to 50." },
+                                highlights: { type: Type.NUMBER, description: "Value from -50 to 50." },
+                                shadows: { type: Type.NUMBER, description: "Value from -50 to 50." },
+                                colorPalette: { type: Type.ARRAY, items: { type: Type.STRING }, description: "An array of 8 hex color codes." },
+                                colorHarmony: { type: Type.STRING, description: "One of the predefined harmony options." },
+                            },
+                        },
+                        camera: {
+                            type: Type.OBJECT,
+                            properties: {
+                                movementType: { type: Type.STRING, description: "One of the predefined movement types." },
+                                startPos: { type: Type.OBJECT, properties: { x: { type: Type.NUMBER }, y: { type: Type.NUMBER } } },
+                                endPos: { type: Type.OBJECT, properties: { x: { type: Type.NUMBER }, y: { type: Type.NUMBER } } },
+                                duration: { type: Type.NUMBER },
+                                easing: { type: Type.STRING, description: "One of 'linear', 'ease-in', 'ease-out', 'ease-in-out'." },
+                                focalLength: { type: Type.NUMBER, description: "A common focal length like 24, 35, 50, 85." },
+                            },
+                        },
+                    },
+                },
+            },
+        });
+        const jsonString = response.text.trim();
+        const parsed = JSON.parse(jsonString);
+
+        if (!parsed.composition.characters || parsed.composition.characters.length === 0) {
+            parsed.composition.characters = [{ id: 'char-1', name: 'Subject A', x: 400, y: 225 }];
+        }
+        parsed.composition.characters.forEach((c: CompositionCharacter) => {
+            if (!c.id) c.id = `char-${Math.random()}`;
+        });
+
+        return parsed;
+    } catch (error) {
+        console.error("Gemini API Error - Visual initialization failed, using defaults:", error);
+        return {
+            composition: clone(defaultComposition),
+            lighting: clone(defaultLighting),
+            color: clone(defaultColorGrading),
+            camera: clone(defaultCameraMovement),
+        };
     }
 };

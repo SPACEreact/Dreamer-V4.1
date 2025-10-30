@@ -75,7 +75,8 @@ import {
     getTimelineSuggestion,
     analyzeSequenceStyle,
     generateBrollPrompt,
-    generateSmartVisualDescription
+    generateSmartVisualDescription,
+    initializeVisualsFromStoryboardShot
 } from './services/geminiService';
 
 // #############################################################################################
@@ -579,14 +580,18 @@ const funLoadingTexts = [
 const StoryboardPage: React.FC<{
     setStage: (stage: Stage) => void;
     setGeneratedPrompts: React.Dispatch<React.SetStateAction<ShotPrompt[]>>;
-    ensureShotVisualDefaults: (items: ShotItem[]) => void;
     scriptText: string;
     setTimelineItems: React.Dispatch<React.SetStateAction<AnyTimelineItem[]>>;
-}> = ({ setStage, setGeneratedPrompts, ensureShotVisualDefaults, scriptText, setTimelineItems }) => {
+    setCompositions: React.Dispatch<React.SetStateAction<Record<string, CompositionData>>>;
+    setLightingData: React.Dispatch<React.SetStateAction<Record<string, LightingData>>>;
+    setColorGradingData: React.Dispatch<React.SetStateAction<Record<string, ColorGradingData>>>;
+    setCameraMovement: React.Dispatch<React.SetStateAction<Record<string, CameraMovementData>>>;
+}> = ({ setStage, setTimelineItems, scriptText, setCompositions, setLightingData, setColorGradingData, setCameraMovement }) => {
     const [script, setScript] = useState(scriptText);
     const [storyboard, setStoryboard] = useState<StoryboardShot[]>([]);
     const [progress, setProgress] = useState<StoryboardProgressUpdate | null>(null);
     const [isLoading, setIsLoading] = useState(false);
+    const [isConverting, setIsConverting] = useState(false);
     const progressIntervalRef = useRef<number | null>(null);
     
     useEffect(() => {
@@ -654,11 +659,22 @@ const StoryboardPage: React.FC<{
         }
     };
 
-    const convertToTimeline = () => {
-        const items: ShotItem[] = storyboard.map((shot, index) => {
+    const convertToTimeline = async () => {
+        if (storyboard.length === 0 || isConverting) return;
+        setIsConverting(true);
+    
+        const items: ShotItem[] = [];
+        const newCompositions: Record<string, CompositionData> = {};
+        const newLighting: Record<string, LightingData> = {};
+        const newColor: Record<string, ColorGradingData> = {};
+        const newCamera: Record<string, CameraMovementData> = {};
+    
+        for (const [index, shot] of storyboard.entries()) {
             const prompt = `Cinematic shot ${index + 1}: ${shot.shotDetails.shotType}. Scene: ${shot.screenplayLine}. Description: ${shot.shotDetails.description}. Camera Angle: ${shot.shotDetails.cameraAngle}. Camera Movement: ${shot.shotDetails.cameraMovement}. Lighting: ${shot.shotDetails.lightingMood}.`;
-            return {
-                id: crypto.randomUUID(),
+            const newItemId = crypto.randomUUID();
+            
+            items.push({
+                id: newItemId,
                 type: 'shot',
                 data: {
                     shotNumber: index + 1,
@@ -667,10 +683,22 @@ const StoryboardPage: React.FC<{
                     description: shot.screenplayLine,
                     role: shot.shotDetails.shotType,
                 }
-            };
-        });
-        ensureShotVisualDefaults(items);
+            });
+            
+            const visuals = await initializeVisualsFromStoryboardShot(shot);
+            newCompositions[newItemId] = visuals.composition;
+            newLighting[newItemId] = visuals.lighting;
+            newColor[newItemId] = visuals.color;
+            newCamera[newItemId] = visuals.camera;
+        }
+    
+        setCompositions(prev => ({ ...prev, ...newCompositions }));
+        setLightingData(prev => ({ ...prev, ...newLighting }));
+        setColorGradingData(prev => ({ ...prev, ...newColor }));
+        setCameraMovement(prev => ({ ...prev, ...newCamera }));
+        
         setTimelineItems(items);
+        setIsConverting(false);
         setStage('final');
     };
 
@@ -728,7 +756,9 @@ const StoryboardPage: React.FC<{
                                 </div>
                             ))}</div>
                             <div className="mt-6 flex justify-center">
-                                <motion.button onClick={convertToTimeline} disabled={storyboard.length === 0} className="px-8 py-4 text-lg bg-gradient-to-r from-amber-500 to-orange-600 text-white font-semibold rounded-lg disabled:opacity-50">Continue to Visual Editor</motion.button>
+                                <motion.button onClick={convertToTimeline} disabled={storyboard.length === 0 || isConverting} className="px-8 py-4 text-lg bg-gradient-to-r from-amber-500 to-orange-600 text-white font-semibold rounded-lg disabled:opacity-50 flex items-center justify-center space-x-2">
+                                     {isConverting ? ( <><div className="w-5 h-5 animate-spin rounded-full border-2 border-gray-300 border-t-white" /><span>Initializing Visuals...</span></> ) : ( 'Continue to Visual Editor' )}
+                                </motion.button>
                             </div>
                         </div>
                     )}
@@ -743,7 +773,6 @@ interface VisualSequenceEditorProps {
     setTimelineItems: React.Dispatch<React.SetStateAction<AnyTimelineItem[]>>;
     promptData: PromptData;
     setStage: (stage: Stage) => void;
-    // ... all other props
     visualPresets: VisualPreset[];
     savePreset: (name: string, timelineItemId: string) => void;
     applyPresetToItem: (preset: VisualPreset, timelineItemId: string) => void;
@@ -764,6 +793,7 @@ interface VisualSequenceEditorProps {
     updatePromptFromVisuals: (timelineItemId: string) => void;
     aspectRatios: Record<string, string>;
     setAspectRatios: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+    deleteTimelineItem: (id: string) => void;
 }
 
 // #############################################################################################
@@ -949,6 +979,7 @@ const VisualSequenceEditor: React.FC<VisualSequenceEditorProps> = (props) => {
         cameraMovement,
         aspectRatios,
         setAspectRatios,
+        deleteTimelineItem,
     } = props;
     
     const [activeTimelineItemId, setActiveTimelineItemId] = useState<string | null>(timelineItems.find(item => item.type === 'shot')?.id || null);
@@ -1133,6 +1164,18 @@ const VisualSequenceEditor: React.FC<VisualSequenceEditorProps> = (props) => {
             console.error("Failed to copy video prompt:", error);
         }
     };
+
+    const handleDeleteItem = (id: string) => {
+        if (activeTimelineItemId === id) {
+            setActiveTimelineItemId(null);
+        }
+        setGeneratedContent(prev => {
+            const next = { ...prev };
+            delete next[id];
+            return next;
+        });
+        deleteTimelineItem(id);
+    };
     
     return (
         <div className="min-h-screen bg-black text-white p-4">
@@ -1200,9 +1243,9 @@ const VisualSequenceEditor: React.FC<VisualSequenceEditorProps> = (props) => {
                             {timelineItems.map(item => (
                                 <Reorder.Item key={item.id} value={item} className={`bg-gray-800 rounded-lg border-2 shadow-sm cursor-grab active:cursor-grabbing transition-colors ${activeTimelineItemId === item.id ? 'border-amber-500' : 'border-gray-800 hover:border-gray-700'}`}
                                 >
-                                    <div className="p-3 flex items-start" onClick={() => setActiveTimelineItemId(item.id)}>
+                                    <div className="p-3 flex items-center">
                                         <GripVertical className="w-5 h-5 text-gray-600 mr-2 flex-shrink-0 mt-0.5"/>
-                                        <div className="flex-grow">
+                                        <div className="flex-grow" onClick={() => setActiveTimelineItemId(item.id)}>
                                             {item.type === 'shot' && <p className="font-bold text-sm">Shot {(item as ShotItem).data.shotNumber}: {(item as ShotItem).data.role}</p> }
                                             {item.type === 'b-roll' && <p className="font-bold text-sm italic text-cyan-400">B-Roll</p>}
                                             {item.type === 'transition' && <p className="font-bold text-sm italic text-purple-400">Transition</p>}
@@ -1211,6 +1254,9 @@ const VisualSequenceEditor: React.FC<VisualSequenceEditorProps> = (props) => {
                                                 {item.type === 'shot' ? (item as ShotItem).data.description : item.type === 'b-roll' ? (item as BrollItem).prompt : item.type === 'transition' ? (item as TransitionItem).note : (item as TextItem).title}
                                             </p>
                                         </div>
+                                        <motion.button whileHover={{ scale: 1.1 }} whileTap={{ scale: 0.9 }} onClick={(e) => { e.stopPropagation(); handleDeleteItem(item.id); }} className="ml-2 p-1 text-gray-500 hover:text-red-400 rounded-md" title="Delete Item">
+                                            <Trash2 className="w-4 h-4" />
+                                        </motion.button>
                                     </div>
                                 </Reorder.Item>
                             ))}
@@ -1367,20 +1413,6 @@ export default function App() {
         return shotScenes;
     };
 
-    const ensureShotVisualDefaults = (items: ShotItem[]) => {
-        const updates: { comp: Record<string, CompositionData>, light: Record<string, LightingData>, color: Record<string, ColorGradingData>, move: Record<string, CameraMovementData> } = { comp: {}, light: {}, color: {}, move: {} };
-        items.forEach(item => {
-            if (!compositions[item.id]) updates.comp[item.id] = clone(defaultComposition);
-            if (!lightingData[item.id]) updates.light[item.id] = clone(defaultLighting);
-            if (!colorGradingData[item.id]) updates.color[item.id] = clone(defaultColorGrading);
-            if (!cameraMovement[item.id]) updates.move[item.id] = clone(defaultCameraMovement);
-        });
-        setCompositions(prev => ({ ...prev, ...updates.comp }));
-        setLightingData(prev => ({ ...prev, ...updates.light }));
-        setColorGradingData(prev => ({ ...prev, ...updates.color }));
-        setCameraMovement(prev => ({ ...prev, ...updates.move }));
-    };
-
     const generatePrompt = async () => {
         const numberOfShots = parseInt(formatValue(promptData.numberOfShots)) || 3;
         const shotTypeArray = (formatValue(promptData.shotTypes) || 'medium shot, close up, wide shot').split(',').map(s => s.trim());
@@ -1399,14 +1431,24 @@ export default function App() {
             newShotItems.push({ id: newItemId, type: 'shot', data: shotPrompt });
         }
         
-        ensureShotVisualDefaults(newShotItems);
+        const updates: { comp: Record<string, CompositionData>, light: Record<string, LightingData>, color: Record<string, ColorGradingData>, move: Record<string, CameraMovementData> } = { comp: {}, light: {}, color: {}, move: {} };
+        newShotItems.forEach(item => {
+            updates.comp[item.id] = clone(defaultComposition);
+            updates.light[item.id] = clone(defaultLighting);
+            updates.color[item.id] = clone(defaultColorGrading);
+            updates.move[item.id] = clone(defaultCameraMovement);
+        });
+        setCompositions(prev => ({ ...prev, ...updates.comp }));
+        setLightingData(prev => ({ ...prev, ...updates.light }));
+        setColorGradingData(prev => ({ ...prev, ...updates.color }));
+        setCameraMovement(prev => ({ ...prev, ...updates.move }));
 
         const finalItems = await Promise.all(newShotItems.map(async (item) => {
             const smartDesc = await generateSmartVisualDescription({
-                composition: compositions[item.id] || defaultComposition,
-                lighting: lightingData[item.id] || defaultLighting,
-                color: colorGradingData[item.id] || defaultColorGrading,
-                camera: cameraMovement[item.id] || defaultCameraMovement,
+                composition: updates.comp[item.id],
+                lighting: updates.light[item.id],
+                color: updates.color[item.id],
+                camera: updates.move[item.id],
             });
             const prompt = `Cinematic shot ${item.data.shotNumber}: ${item.data.role}. Scene: ${item.data.description}. ${smartDesc}`;
             return { ...item, data: { ...item.data, prompt, originalPrompt: prompt } };
@@ -1485,6 +1527,22 @@ export default function App() {
         
         setTimelineItems(prev => prev.map(i => i.id === timelineItemId && i.type === 'shot' ? {...i, data: {...i.data, prompt: newPrompt }} : i));
     };
+    
+    const deleteTimelineItem = (id: string) => {
+        setTimelineItems(prev => prev.filter(item => item.id !== id));
+        const cleanup = (setter: React.Dispatch<React.SetStateAction<Record<string, any>>>) => {
+            setter(prev => {
+                const next = { ...prev };
+                delete next[id];
+                return next;
+            });
+        };
+        cleanup(setCompositions);
+        cleanup(setLightingData);
+        cleanup(setColorGradingData);
+        cleanup(setCameraMovement);
+        cleanup(setAspectRatios);
+    };
 
     // #############################################################################################
     // RENDER LOGIC
@@ -1514,9 +1572,12 @@ export default function App() {
         return <StoryboardPage 
             setStage={setStage}
             setGeneratedPrompts={setGeneratedPrompts}
-            ensureShotVisualDefaults={ensureShotVisualDefaults}
             scriptText={promptData.scriptText || ''}
             setTimelineItems={setTimelineItems}
+            setCompositions={setCompositions}
+            setLightingData={setLightingData}
+            setColorGradingData={setColorGradingData}
+            setCameraMovement={setCameraMovement}
         />;
     }
     if (stage === 'final') {
@@ -1541,6 +1602,7 @@ export default function App() {
             updatePromptFromVisuals={updatePromptFromVisualsLogic}
             aspectRatios={aspectRatios}
             setAspectRatios={setAspectRatios}
+            deleteTimelineItem={deleteTimelineItem}
         />;
     }
     return <div>Loading...</div>;
