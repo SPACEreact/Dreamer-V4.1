@@ -4,7 +4,7 @@ import { GoogleGenAI, Modality, Type } from "@google/genai";
 import { ExtractedKnowledge, StoryboardShot, SequenceStyle, CompositionData, LightingData, ColorGradingData, CameraMovementData, CompositionCharacter } from "../types";
 
 // The GoogleGenAI instance is initialized with the API key from environment variables as per guidelines.
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+const ai = new GoogleGenAI({ apiKey: import.meta.env.VITE_API_KEY });
 
 function clone<T>(value: T): T {
   return JSON.parse(JSON.stringify(value));
