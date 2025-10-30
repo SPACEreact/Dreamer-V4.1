@@ -25,7 +25,8 @@ import {
   Type as TypeIcon,
   Scissors,
   GripVertical,
-  Palette
+  Palette,
+  Download
 } from 'lucide-react';
 import {
   questions,
@@ -113,6 +114,15 @@ const getCameraLinePosition = (height: string, angle: string): { x1: number; y1:
     const x1 = centerX + anglePos.xOffset;
     const x2 = centerX + anglePos.xOffset;
     return { x1, y1: heightPos.y1, x2, y2: heightPos.y2 };
+};
+
+const downloadBase64Image = (base64Data: string, mimeType: string, filename: string) => {
+    const link = document.createElement('a');
+    link.href = `data:${mimeType};base64,${base64Data}`;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
 };
 
 const defaultComposition: CompositionData = { characters: [{ id: 'char-1', name: 'Subject A', x: 400, y: 225 }, { id: 'char-2', name: 'Subject B', x: 280, y: 260 }], cameraAngle: 'true-eye, honest', cameraHeight: 'eye-level witness' };
@@ -930,11 +940,28 @@ const SelectedItemPanel: React.FC<SelectedItemPanelProps> = ({
                             <option value="3:4">3:4</option>
                         </select>
                     </div>
-                    <div className="w-full flex-grow bg-gray-900 border border-gray-700 rounded-lg p-2 flex items-center justify-center relative">
+                    <div className="w-full flex-grow bg-gray-900 border border-gray-700 rounded-lg p-2 flex items-center justify-center relative group">
                         {generatedContent.status === 'loading' && <div className="w-6 h-6 animate-spin rounded-full border-2 border-gray-400 border-t-amber-400" />}
                         {generatedContent.status === 'error' && <p className="text-red-400 text-sm">Generation Failed</p>}
                         {generatedContent.status === 'idle' && generatedContent.images[imageView] && (
-                            <img src={imageView === 'photoreal' ? `data:image/jpeg;base64,${generatedContent.images.photoreal}` : `data:image/png;base64,${generatedContent.images.stylized}`} className="max-w-full max-h-full object-contain rounded"/>
+                            <>
+                                <img src={imageView === 'photoreal' ? `data:image/jpeg;base64,${generatedContent.images.photoreal}` : `data:image/png;base64,${generatedContent.images.stylized}`} className="max-w-full max-h-full object-contain rounded"/>
+                                <motion.button
+                                    whileHover={{ scale: 1.1 }}
+                                    whileTap={{ scale: 0.9 }}
+                                    onClick={() => {
+                                        const base64Data = generatedContent.images[imageView]!;
+                                        const mimeType = imageView === 'photoreal' ? 'image/jpeg' : 'image/png';
+                                        const extension = imageView === 'photoreal' ? 'jpg' : 'png';
+                                        const filename = `dreamer-shot-${shotData.shotNumber}-${imageView}.${extension}`;
+                                        downloadBase64Image(base64Data, mimeType, filename);
+                                    }}
+                                    className="absolute top-2 right-2 p-2 bg-gray-900/50 hover:bg-gray-900/80 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                                    title="Download Image"
+                                >
+                                    <Download className="w-4 h-4 text-white" />
+                                </motion.button>
+                            </>
                         )}
                          {generatedContent.status === 'idle' && !generatedContent.images[imageView] && <p className="text-gray-500 text-sm">{imageView === 'photoreal' ? 'Photoreal' : 'Stylized'} image will appear here</p>}
                      </div>
