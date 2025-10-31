@@ -1,5 +1,7 @@
 
 
+
+
 import { GoogleGenAI, Modality, Type } from "@google/genai";
 import { ExtractedKnowledge, StoryboardShot, SequenceStyle, CompositionData, LightingData, ColorGradingData, CameraMovementData, CompositionCharacter } from "../types";
 
@@ -138,11 +140,15 @@ export const generateStoryFromIdea = async (idea: string): Promise<string[]> => 
     }
 };
 
-export const generateImage = async (prompt: string, aspectRatio: string = '16:9'): Promise<string> => {
+export const generateImage = async (prompt: string, aspectRatio: string = '16:9', style: 'cinematic' | 'explainer' = 'cinematic'): Promise<string> => {
     try {
+      const stylePrefix = style === 'explainer'
+        ? 'A clean, simple, engaging illustration for an explainer video. The style should be modern, with clear lines and friendly colors. Focus on communicating the core idea of the prompt clearly.'
+        : 'Create a cinematic, photorealistic image based on the following detailed prompt. Emphasize mood, lighting, and composition.';
+
       const response = await ai.models.generateImages({
         model: 'imagen-4.0-generate-001',
-        prompt: `Create a cinematic, photorealistic image based on the following detailed prompt. Emphasize mood, lighting, and composition. ${prompt}`,
+        prompt: `${stylePrefix} ${prompt}`,
         config: {
           numberOfImages: 1,
           outputMimeType: 'image/jpeg',
@@ -161,12 +167,16 @@ export const generateImage = async (prompt: string, aspectRatio: string = '16:9'
     }
 };
 
-export const generateNanoImage = async (prompt: string): Promise<string> => {
+export const generateNanoImage = async (prompt: string, style: 'cinematic' | 'explainer' = 'cinematic'): Promise<string> => {
     try {
+        const stylePrefix = style === 'explainer'
+            ? 'A stylized, modern, and simple illustration for an explainer video. Focus on clarity, visual appeal, and effective communication of the core concept.'
+            : 'A cinematic, stylized image based on the following detailed prompt. Emphasize mood, lighting, and composition.';
+        
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-flash-image',
             contents: {
-              parts: [{ text: `A cinematic, stylized image based on the following detailed prompt. Emphasize mood, lighting, and composition. ${prompt}` }],
+              parts: [{ text: `${stylePrefix} ${prompt}` }],
             },
             config: {
                 responseModalities: [Modality.IMAGE],
@@ -186,11 +196,17 @@ export const generateNanoImage = async (prompt: string): Promise<string> => {
     }
 };
 
-export const generateStoryboard = async (script: string): Promise<StoryboardShot[]> => {
+export const generateStoryboard = async (script: string, style: 'cinematic' | 'explainer' = 'cinematic'): Promise<StoryboardShot[]> => {
     try {
+        const cinematicPrompt = `Act as a 'Professional Storyboard Maker'. Convert the following script into a visual storyboard. For each screenplay line, generate a detailed shot prompt representing 2.5-3 seconds of screen time. Break down long lines into multiple impactful shots. Suggest keyframes, advanced camera movements, framing, composition, and lighting mood. Maintain a professional, industry-standard tone.\n\nSCRIPT:\n${script}`;
+        
+        const explainerPrompt = `Act as an 'Explainer Video Storyboard Artist'. Your task is to break down the provided script into a sequence of shots for an engaging explainer video. Each shot should correspond to roughly 3-3.5 seconds of narration. Assuming an average speaking rate of 150 words per minute (2.5 words per second), each shot should visualize a segment of about 8-9 words from the script. For each segment, create a clear shot description focusing on simple, effective visuals that illustrate the narration. The shot details should be geared towards clean, modern illustrations, not photorealism. Avoid complex cinematic jargon. The goal is clarity and communication.\n\nSCRIPT:\n${script}`;
+
+        const prompt = style === 'explainer' ? explainerPrompt : cinematicPrompt;
+
         const response = await ai.models.generateContent({
             model: 'gemini-2.5-pro',
-            contents: `Act as a 'Professional Storyboard Maker'. Convert the following script into a visual storyboard. For each screenplay line, generate a detailed shot prompt representing 2.5-3 seconds of screen time. Break down long lines into multiple impactful shots. Suggest keyframes, advanced camera movements, framing, composition, and lighting mood. Maintain a professional, industry-standard tone.\n\nSCRIPT:\n${script}`,
+            contents: prompt,
             config: {
                 responseMimeType: "application/json",
                 responseSchema: {
@@ -258,6 +274,59 @@ export const generateStoryboard = async (script: string): Promise<StoryboardShot
     } catch (error) {
         console.error("Gemini API Error - Storyboard generation failed:", error);
         throw new Error("Failed to generate or parse storyboard JSON from API response.");
+    }
+};
+
+export const makeExplainerPromptCinematic = async (shot: StoryboardShot, knowledgeContext: string): Promise<StoryboardShot> => {
+    try {
+        const response = await ai.models.generateContent({
+            model: 'gemini-2.5-pro',
+            contents: `You are a world-class Director of Photography, transforming a simple explainer video concept into a full-fledged cinematic shot.
+            
+            Analyze the provided simple shot description and the cinematic knowledge base. Your task is to completely rewrite the 'shotDetails' to be evocative, professional, and visually rich.
+            
+            - **Elevate the Language:** Use strong, descriptive verbs and professional cinematography terms.
+            - **Incorporate Theory:** Weave in concepts from the knowledge base regarding lighting, composition, and camera movement.
+            - **Add Specificity:** Suggest a specific lens, f-stop, or lighting setup if it serves the mood.
+            - **Maintain Core Idea:** The cinematic shot must still convey the core subject of the original explainer shot.
+            
+            **CINEMATIC KNOWLEDGE BASE:**
+            ---
+            ${knowledgeContext.substring(0, 10000)} 
+            ---
+            
+            **ORIGINAL EXPLAINER SHOT:**
+            ${JSON.stringify(shot, null, 2)}
+            
+            Return ONLY the rewritten JSON for the entire StoryboardShot object, with the updated shotDetails. Do not include any other text or markdown formatting. The output must be a single, valid JSON object.`,
+            config: {
+                responseMimeType: "application/json",
+                responseSchema: {
+                    type: Type.OBJECT,
+                    properties: {
+                        screenplayLine: { type: Type.STRING, description: "The original, unchanged screenplay line." },
+                        shotDetails: {
+                            type: Type.OBJECT,
+                            properties: {
+                                shotType: { type: Type.STRING, description: "A more cinematic Shot Type/Size (e.g., 'Intimate Close-Up', 'Sweeping Wide Shot')." },
+                                cameraAngle: { type: Type.STRING, description: "A more cinematic Camera Angle (e.g., 'Low Angle Reverence', 'Dutch Tilt for unease')." },
+                                description: { type: Type.STRING, description: "A rewritten, evocative Action/Subject Description with more detail." },
+                                lightingMood: { type: Type.STRING, description: "A specific and moody Key Lighting/Mood (e.g., 'Chiaroscuro with volumetric dust motes')." },
+                                cameraMovement: { type: Type.STRING, description: "A more descriptive camera movement (e.g., 'Slow Dolly In to heighten tension', 'Steadicam Follow with a slight tremor')." },
+                            },
+                            required: ["shotType", "cameraAngle", "description", "lightingMood", "cameraMovement"]
+                        }
+                    },
+                    required: ["screenplayLine", "shotDetails"]
+                },
+                thinkingConfig: { thinkingBudget: 32768 },
+            },
+        });
+        const jsonString = response.text.trim();
+        return JSON.parse(jsonString);
+    } catch (error) {
+        console.error("Gemini API Error - Failed to make prompt cinematic:", error);
+        throw new Error("Failed to enhance explainer prompt into a cinematic one.");
     }
 };
 

@@ -1,5 +1,7 @@
 
 
+
+
 import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
 import {
@@ -77,7 +79,8 @@ import {
     analyzeSequenceStyle,
     generateBrollPrompt,
     generateSmartVisualDescription,
-    initializeVisualsFromStoryboardShot
+    initializeVisualsFromStoryboardShot,
+    makeExplainerPromptCinematic
 } from './services/geminiService';
 
 // #############################################################################################
@@ -599,9 +602,11 @@ const StoryboardPage: React.FC<{
 }> = ({ setStage, setTimelineItems, scriptText, setCompositions, setLightingData, setColorGradingData, setCameraMovement }) => {
     const [script, setScript] = useState(scriptText);
     const [storyboard, setStoryboard] = useState<StoryboardShot[]>([]);
+    const [storyboardStyle, setStoryboardStyle] = useState<'cinematic' | 'explainer'>('cinematic');
     const [progress, setProgress] = useState<StoryboardProgressUpdate | null>(null);
     const [isLoading, setIsLoading] = useState(false);
     const [isConverting, setIsConverting] = useState(false);
+    const [enhancingShotIndex, setEnhancingShotIndex] = useState<number | null>(null);
     const progressIntervalRef = useRef<number | null>(null);
     
     useEffect(() => {
@@ -640,7 +645,7 @@ const StoryboardPage: React.FC<{
         }, intervalTimeMs);
 
         try {
-            const result = await generateStoryboard(script);
+            const result = await generateStoryboard(script, storyboardStyle);
 
             if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
             setProgress({
@@ -666,6 +671,29 @@ const StoryboardPage: React.FC<{
         } finally {
             setIsLoading(false);
             if (progressIntervalRef.current) clearInterval(progressIntervalRef.current);
+        }
+    };
+
+    const handleMakeCinematic = async (shotToEnhance: StoryboardShot, index: number) => {
+        if (enhancingShotIndex !== null) return; // Prevent multiple requests
+        setEnhancingShotIndex(index);
+        try {
+            const knowledgeContext = preloadedKnowledgeBase.map(doc => `## ${doc.name}\n${doc.content}`).join('\n\n');
+            const enhancedShot = await makeExplainerPromptCinematic(shotToEnhance, knowledgeContext);
+            
+            if (enhancedShot && enhancedShot.screenplayLine && enhancedShot.shotDetails) {
+                setStoryboard(prevStoryboard => {
+                    const newStoryboard = [...prevStoryboard];
+                    newStoryboard[index] = enhancedShot;
+                    return newStoryboard;
+                });
+            } else {
+                throw new Error("Received invalid shot data from enhancement API.");
+            }
+        } catch (error) {
+            console.error("Failed to make shot cinematic:", error);
+        } finally {
+            setEnhancingShotIndex(null);
         }
     };
 
@@ -724,7 +752,24 @@ const StoryboardPage: React.FC<{
             <div className="max-w-4xl mx-auto">
                 <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }}>
                     <h1 className="text-4xl font-bold text-center mb-2 bg-gradient-to-r from-amber-400 to-orange-500 bg-clip-text text-transparent">Script to Storyboard</h1>
-                    <p className="text-center text-gray-400 mb-8">Paste your script and let Dreamer break it down into a visual sequence.</p>
+                    <p className="text-center text-gray-400 mb-6">Paste your script and let Dreamer break it down into a visual sequence.</p>
+
+                    <div className="flex justify-center mb-4">
+                        <div className="bg-gray-800 border border-gray-700 rounded-lg p-1 flex space-x-1">
+                            <button
+                                onClick={() => setStoryboardStyle('cinematic')}
+                                className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${storyboardStyle === 'cinematic' ? 'bg-amber-500 text-black' : 'text-gray-300 hover:bg-gray-700'}`}
+                            >
+                                Cinematic Style
+                            </button>
+                            <button
+                                onClick={() => setStoryboardStyle('explainer')}
+                                className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${storyboardStyle === 'explainer' ? 'bg-amber-500 text-black' : 'text-gray-300 hover:bg-gray-700'}`}
+                            >
+                                Explainer Style
+                            </button>
+                        </div>
+                    </div>
 
                     <textarea value={script} onChange={e => setScript(e.target.value)} placeholder="Paste your script here..." className="w-full h-48 p-4 bg-gray-900 border border-gray-800 rounded-lg text-white placeholder-gray-500 focus:border-amber-500 focus:outline-none resize-none mb-4" />
                     <div className="flex justify-center space-x-4">
@@ -768,6 +813,29 @@ const StoryboardPage: React.FC<{
                                         <p><strong className="text-amber-400">Description:</strong> {shot.shotDetails.description}</p>
                                         <p><strong className="text-amber-400">Lighting:</strong> {shot.shotDetails.lightingMood}</p>
                                     </div>
+                                    {storyboardStyle === 'explainer' && (
+                                        <div className="mt-3 text-right">
+                                            <motion.button 
+                                                whileHover={{ scale: 1.05 }} 
+                                                whileTap={{ scale: 0.95 }}
+                                                onClick={() => handleMakeCinematic(shot, index)}
+                                                disabled={enhancingShotIndex === index}
+                                                className="px-3 py-1 text-xs rounded-lg bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 hover:bg-indigo-500/30 disabled:opacity-50 flex items-center space-x-2 ml-auto"
+                                            >
+                                                {enhancingShotIndex === index ? (
+                                                    <>
+                                                        <div className="w-3 h-3 animate-spin rounded-full border-2 border-indigo-200 border-t-indigo-400" />
+                                                        <span>Enhancing...</span>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <Film className="w-3 h-3" />
+                                                        <span>Make Cinematic</span>
+                                                    </>
+                                                )}
+                                            </motion.button>
+                                        </div>
+                                    )}
                                 </div>
                             ))}</div>
                             <div className="mt-6 flex justify-center">
@@ -808,6 +876,8 @@ interface VisualSequenceEditorProps {
     updatePromptFromVisuals: (timelineItemId: string) => void;
     aspectRatios: Record<string, string>;
     setAspectRatios: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+    styles: Record<string, 'cinematic' | 'explainer'>;
+    setStyles: React.Dispatch<React.SetStateAction<Record<string, 'cinematic' | 'explainer'>>>;
     deleteTimelineItem: (id: string) => void;
 }
 
@@ -836,13 +906,15 @@ interface SelectedItemPanelProps {
     updatePromptFromVisuals: (id: string) => Promise<void>;
     aspectRatios: Record<string, string>;
     setAspectRatios: React.Dispatch<React.SetStateAction<Record<string, string>>>;
+    styles: Record<string, 'cinematic' | 'explainer'>;
+    setStyles: React.Dispatch<React.SetStateAction<Record<string, 'cinematic' | 'explainer'>>>;
 }
 
 
 const SelectedItemPanel: React.FC<SelectedItemPanelProps> = ({
     item, updateItem, onEnhance, onRevert, onGenerateImage, onGenerateVideoPrompt, generatedContent,
     compositions, lightingData, colorGradingData, cameraMovement, updateVisuals, updatePromptFromVisuals,
-    aspectRatios, setAspectRatios
+    aspectRatios, setAspectRatios, styles, setStyles
 }) => {
     const [activeVisualTab, setActiveVisualTab] = useState<'composition' | 'lighting' | 'color' | 'camera'>('composition');
     const [imageView, setImageView] = useState<'photoreal' | 'stylized'>('photoreal');
@@ -873,6 +945,11 @@ const SelectedItemPanel: React.FC<SelectedItemPanelProps> = ({
     const shotItem = item as ShotItem;
     const shotData = shotItem.data;
     const isModified = shotData.prompt !== shotData.originalPrompt;
+
+    const currentStyle = styles[item.id] || 'cinematic';
+    const setCurrentStyle = (style: 'cinematic' | 'explainer') => {
+        setStyles(prev => ({ ...prev, [item.id]: style }));
+    };
 
     // Visual Editor Handlers
     const onCompositionChange = (field: keyof CompositionData, value: any) => updateVisuals(item.id, 'compositions', { ...visualData.composition, [field]: value });
@@ -928,17 +1005,27 @@ const SelectedItemPanel: React.FC<SelectedItemPanelProps> = ({
                  <div className="space-y-2 flex flex-col">
                     <div className="flex items-center justify-between">
                          <h3 className="text-sm font-semibold text-gray-300">Generated Content</h3>
-                         <select 
-                            value={aspectRatios[item.id] || '16:9'} 
-                            onChange={(e) => setAspectRatios(prev => ({ ...prev, [item.id]: e.target.value }))}
-                            className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-amber-500"
-                        >
-                            <option value="16:9">16:9</option>
-                            <option value="9:16">9:16</option>
-                            <option value="1:1">1:1</option>
-                            <option value="4:3">4:3</option>
-                            <option value="3:4">3:4</option>
-                        </select>
+                         <div className="flex items-center space-x-2">
+                            <div className="bg-gray-800 border border-gray-700 rounded p-0.5 flex text-xs">
+                                <button onClick={() => setCurrentStyle('cinematic')} className={`px-2 py-1 rounded transition-colors ${currentStyle === 'cinematic' ? 'bg-amber-500 text-black font-semibold' : 'text-gray-300 hover:bg-gray-700'}`}>
+                                    Cinematic
+                                </button>
+                                <button onClick={() => setCurrentStyle('explainer')} className={`px-2 py-1 rounded transition-colors ${currentStyle === 'explainer' ? 'bg-amber-500 text-black font-semibold' : 'text-gray-300 hover:bg-gray-700'}`}>
+                                    Explainer
+                                </button>
+                            </div>
+                            <select 
+                                value={aspectRatios[item.id] || '16:9'} 
+                                onChange={(e) => setAspectRatios(prev => ({ ...prev, [item.id]: e.target.value }))}
+                                className="bg-gray-800 border border-gray-700 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-amber-500"
+                            >
+                                <option value="16:9">16:9</option>
+                                <option value="9:16">9:16</option>
+                                <option value="1:1">1:1</option>
+                                <option value="4:3">4:3</option>
+                                <option value="3:4">3:4</option>
+                            </select>
+                         </div>
                     </div>
                     <div className="w-full flex-grow bg-gray-900 border border-gray-700 rounded-lg p-2 flex items-center justify-center relative group">
                         {generatedContent.status === 'loading' && <div className="w-6 h-6 animate-spin rounded-full border-2 border-gray-400 border-t-amber-400" />}
@@ -1028,6 +1115,8 @@ const VisualSequenceEditor: React.FC<VisualSequenceEditorProps> = (props) => {
         cameraMovement,
         aspectRatios,
         setAspectRatios,
+        styles,
+        setStyles,
         deleteTimelineItem,
     } = props;
     
@@ -1167,13 +1256,19 @@ const VisualSequenceEditor: React.FC<VisualSequenceEditorProps> = (props) => {
 
     const handleGenerateImage = async (item: ShotItem, type: 'photoreal' | 'stylized') => {
         const id = item.id;
+        const style = styles[id] || 'cinematic';
         setGeneratedContent(prev => ({...prev, [id]: {...(prev[id] || {images:{}}), status: 'loading'}}));
         try {
+            const promptForGeneration = style === 'explainer' ? item.data.description : item.data.prompt;
             const imageGenerator = type === 'photoreal' ? generateImage : generateNanoImage;
             const currentAspectRatio = aspectRatios[id] || '16:9';
-            const b64 = type === 'photoreal'
-              ? await generateImage(item.data.prompt, currentAspectRatio)
-              : await generateNanoImage(item.data.prompt);
+
+            let b64: string;
+            if (type === 'photoreal') {
+              b64 = await generateImage(promptForGeneration, currentAspectRatio, style);
+            } else {
+              b64 = await generateNanoImage(promptForGeneration, style);
+            }
 
             setGeneratedContent(prev => ({...prev, [id]: {
                 ...(prev[id] || {images:{}}),
@@ -1269,6 +1364,8 @@ const VisualSequenceEditor: React.FC<VisualSequenceEditorProps> = (props) => {
                                 updatePromptFromVisuals={props.updatePromptFromVisuals as (id: string) => Promise<void>}
                                 aspectRatios={aspectRatios}
                                 setAspectRatios={setAspectRatios}
+                                styles={styles}
+                                setStyles={setStyles}
                            />
                         ) : (
                             <div className="flex-grow flex items-center justify-center text-gray-500 bg-gray-950/70 border border-gray-800 rounded-lg">
@@ -1386,6 +1483,7 @@ export default function App() {
     const [colorGradingData, setColorGradingData] = useState<Record<string, ColorGradingData>>({});
     const [cameraMovement, setCameraMovement] = useState<Record<string, CameraMovementData>>({});
     const [aspectRatios, setAspectRatios] = useState<Record<string, string>>({});
+    const [styles, setStyles] = useState<Record<string, 'cinematic' | 'explainer'>>({});
 
 
     const presetFileInputRef = useRef<HTMLInputElement>(null);
@@ -1412,6 +1510,8 @@ export default function App() {
             if (savedColor) setColorGradingData(JSON.parse(savedColor));
             const savedMovement = localStorage.getItem('dreamerMovement');
             if (savedMovement) setCameraMovement(JSON.parse(savedMovement));
+            const savedStyles = localStorage.getItem('dreamerStyles');
+            if (savedStyles) setStyles(JSON.parse(savedStyles));
         } catch (error) { console.error("Failed to load from localStorage:", error); }
     }, []);
     
@@ -1422,6 +1522,7 @@ export default function App() {
     useEffect(() => { try { localStorage.setItem('dreamerLighting', JSON.stringify(lightingData)); } catch (e) { console.error(e) } }, [lightingData]);
     useEffect(() => { try { localStorage.setItem('dreamerColor', JSON.stringify(colorGradingData)); } catch (e) { console.error(e) } }, [colorGradingData]);
     useEffect(() => { try { localStorage.setItem('dreamerMovement', JSON.stringify(cameraMovement)); } catch (e) { console.error(e) } }, [cameraMovement]);
+    useEffect(() => { try { localStorage.setItem('dreamerStyles', JSON.stringify(styles)); } catch (e) { console.error(e) } }, [styles]);
 
     // #############################################################################################
     // HANDLERS
@@ -1591,6 +1692,7 @@ export default function App() {
         cleanup(setColorGradingData);
         cleanup(setCameraMovement);
         cleanup(setAspectRatios);
+        cleanup(setStyles);
     };
 
     // #############################################################################################
@@ -1651,6 +1753,8 @@ export default function App() {
             updatePromptFromVisuals={updatePromptFromVisualsLogic}
             aspectRatios={aspectRatios}
             setAspectRatios={setAspectRatios}
+            styles={styles}
+            setStyles={setStyles}
             deleteTimelineItem={deleteTimelineItem}
         />;
     }
